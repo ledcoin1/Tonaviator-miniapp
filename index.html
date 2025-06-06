@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="kk">
+<head>
+  <meta charset="UTF-8" />
+  <title>Aviator Mini App</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    body {
+      margin: 0;
+      font-family: 'Segoe UI', sans-serif;
+      background: #000;
+      color: white;
+      text-align: center;
+      padding: 20px;
+      user-select: none;
+    }
+
+    h1 {
+      color: #ff5252;
+      margin-bottom: 10px;
+    }
+
+    #topbar {
+      margin-bottom: 15px;
+      font-size: 16px;
+      color: #ccc;
+      display: flex;
+      justify-content: center;
+      gap: 15px;
+      flex-wrap: wrap;
+    }
+
+    #balance {
+      color: #0ff;
+      font-weight: bold;
+    }
+
+    #game-area {
+      position: relative;
+      width: 100%;
+      max-width: 600px;
+      height: 250px;
+      background: radial-gradient(ellipse at bottom, #1b2735 0%, #090a0f 100%);
+      overflow: hidden;
+      border-radius: 12px;
+      box-shadow: 0 0 10px #0ff;
+      margin: 0 auto 25px auto;
+    }
+
+    .star {
+      position: absolute;
+      background: white;
+      border-radius: 50%;
+      opacity: 0.8;
+      animation: twinkle 2s infinite ease-in-out;
+    }
+
+    @keyframes twinkle {
+      0%, 100% { opacity: 0.3; }
+      50% { opacity: 1; }
+    }
+
+    #plane {
+      position: absolute;
+      top: 100px;
+      left: 0;
+      width: 60px;
+      transition: left 0.05s linear;
+      user-select: none;
+    }
+
+    #multiplier {
+      font-size: 28px;
+      margin-bottom: 15px;
+      font-weight: bold;
+      color: #0ff;
+      text-shadow: 0 0 6px #0ff;
+    }
+
+    button {
+      margin: 5px;
+      padding: 12px 20px;
+      font-size: 16px;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+      user-select: none;
+    }
+
+    #bet-btn {
+      background: #2196f3;
+      color: white;
+      min-width: 120px;
+    }
+    #bet-btn:hover:not(:disabled) {
+      background: #42a5f5;
+    }
+    #bet-btn:disabled {
+      background: #555;
+      cursor: default;
+    }
+
+    #cashout-btn {
+      background: #ff6d00;
+      color: white;
+      display: none;
+      min-width: 120px;
+    }
+    #cashout-btn:hover {
+      background: #ff9100;
+    }
+
+    #history {
+      max-width: 600px;
+      margin: 10px auto 0 auto;
+      background: #111;
+      border-radius: 8px;
+      padding: 10px 15px;
+      font-size: 14px;
+      color: #ccc;
+      user-select: none;
+    }
+    #history strong {
+      color: #0ff;
+    }
+  </style>
+</head>
+<body>
+  <h1>✈️ Aviator</h1>
+
+  <div id="topbar">
+    <div id="user">Жүктелуде...</div>
+    <div id="balance">Баланс: 0.00 TON</div>
+  </div>
+
+  <div id="game-area">
+    <img id="plane" src="https://www.freeiconspng.com/uploads/airplane-png-16.png" />
+  </div>
+
+  <div id="multiplier">x1.00</div>
+
+  <button id="bet-btn" onclick="placeBet()">Ставка</button>
+  <button id="cashout-btn" onclick="cashOut()">Кэшаут</button>
+  <button onclick="checkDeposit(userId, localStorage.getItem('walletAddress'))">Мен төледім</button>
+
+  <div id="history"><strong>История коэффициентов:</strong> <span id="history-list">-</span></div>
+
+  <!-- 👇 Скрипт бөлігі -->
+  <script>
+    const tg = window.Telegram.WebApp;
+    tg.expand();
+
+    const user = tg.initDataUnsafe.user;
+    const userId = user?.id || 123456;
+
+    let balance = 0.0;
+    let multiplier = 1.0;
+    let interval = null;
+    let plane = document.getElementById("plane");
+    let multiplierText = document.getElementById("multiplier");
+    let betBtn = document.getElementById("bet-btn");
+    let cashoutBtn = document.getElementById("cashout-btn");
+    let historyList = document.getElementById("history-list");
+    let userHasBet = false;
+    let history = [];
+
+    if (user) {
+      document.getElementById("user").innerText = `Қош келдіңіз, ${user.first_name}`;
+    }
+
+    function updateBalanceUI() {
+      document.getElementById("balance").innerText = `Баланс: ${balance.toFixed(2)} TON`;
+    }
+
+    async function fetchBalance() {
+      try {
+        const res = await fetch("http://127.0.0.1:8000/get_balance", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ user_id: userId })
+        });
+        const data = await res.json();
+        balance = data.balance || 0;
+        updateBalanceUI();
+      } catch (e) {
+        console.error("Баланс жүктелмеді:", e);
+        updateBalanceUI();
+      }
+    }
+
+    async function placeBet() {
+      if (balance < 1) {
+        alert("Баланс жетпейді");
+        return;
+      }
+      betBtn.disabled = true;
+      try {
+        const res = await fetch("http://127.0.0.1:8000/place_bet", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({ user_id: userId, amount: 1 })
+        });
+        const data = await res.json();
+        alert(data.message || "Ставка қабылданды!");
+        balance -= 1;
+        updateBalanceUI();
+        cashoutBtn.style.display = "inline-block";
+        betBtn.style.display = "none";
+        userHasBet = true;
+      } catch (e) {
+        alert("Ставкада қате");
+        betBtn.disabled = false;
+      }
+    }
+
+    async function sendCashOut(multiplier) {
+      try {
+        const res = await fetch("http://127.0.0.1:8000/cashout", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({ user_id: userId, win_amount: multiplier })
+        });
+        const data = await res.json();
+        alert(data.message || `x${multiplier.toFixed(2)} жеңіс!`);
+        balance += multiplier;
+        updateBalanceUI();
+      } catch (e) {
+        alert("Кэшаут қатесі");
+      }
+    }
+
+    function cashOut() {
+      if (userHasBet) {
+        const currentMultiplier = multiplier;
+        tg.sendData(JSON.stringify({ action: "cashout", multiplier: currentMultiplier }));
+        sendCashOut(currentMultiplier);
+        alert(`✅ Кэшаут x${currentMultiplier.toFixed(2)}!`);
+        cashoutBtn.style.display = "none";
+        betBtn.style.display = "inline-block";
+        userHasBet = false;
+      }
+    }
+
+    function updateHistoryUI() {
+      if (history.length === 0) {
+        historyList.innerText = "-";
+      } else {
+        historyList.innerHTML = history
+          .map(c => `<span style="color:#0ff;">x${c.toFixed(2)}</span>`)
+          .join(", ");
+      }
+    }
+
+    async function checkDeposit(user_id, wallet) {
+      try {
+        const response = await fetch("http://127.0.0.1:8000/check_deposit", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ user_id: user_id, wallet: wallet })
+        });
+
+        const data = await response.json();
+        if (data.success) {
+          alert(`✅ TON түсті! Сомасы: ${data.amount} TON`);
+          fetchBalance();
+        } else {
+          alert("❌ TON табылмады.");
+        }
+      } catch (error) {
+        alert("Қате орын алды.");
+      }
+    }
+
+    // Самолёт пен множительді жүргізу
+    function startPlane() {
+      multiplier = 1.0;
+      let left = 0;
+      interval = setInterval(() => {
+        multiplier += 0.01;
+        left += 3;
+        multiplierText.innerText = `x${multiplier.toFixed(2)}`;
+        plane.style.left = `${left}px`;
+        if (left >= 600) {
+          clearInterval(interval);
+          history.unshift(multiplier);
+          if (history.length > 10) history.pop();
+          updateHistoryUI();
+          plane.style.left = "0px";
+          multiplierText.innerText = "x1.00";
+          cashoutBtn.style.display = "none";
+          betBtn.style.display = "inline-block";
+          userHasBet = false;
+        }
+      }, 50);
+    }
+
+    // Жұлдыздарды генерациялау
+    document.addEventListener("DOMContentLoaded", () => {
+      const gameArea = document.getElementById("game-area");
+      for (let i = 0; i < 100; i++) {
+        let star = document.createElement("div");
+        star.className = "star";
+        star.style.width = star.style.height = `${Math.random() * 2 + 1}px`;
+        star.style.left = `${Math.random() * 100}%`;
+        star.style.top = `${Math.random() * 100}%`;
+        star.style.animationDuration = `${Math.random() * 2 + 1}s`;
+        gameArea.appendChild(star);
+      }
+
+      fetchBalance();
+      startPlane();
+    });
+  </script>
+</body>
+</html>
